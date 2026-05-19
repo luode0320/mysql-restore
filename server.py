@@ -405,19 +405,22 @@ def run_ddl_sync_once() -> None:
     else:
         cmd = [str(DDL_SYNC_SCRIPT)]
 
-    result = subprocess.run(
+    print(f"[{time.strftime('%F %T')}] ddl sync command: {' '.join(cmd)}", flush=True)
+    process = subprocess.Popen(
         cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         encoding="utf-8",
-        capture_output=True,
         env=env,
-        check=False,
     )
-    if result.stdout.strip():
-        print(result.stdout.strip(), flush=True)
-    if result.returncode != 0:
-        stderr = result.stderr.strip() or "DDL sync script returned non-zero exit code"
-        raise RuntimeError(stderr)
+    assert process.stdout is not None
+    for line in process.stdout:
+        print(line.rstrip(), flush=True)
+
+    return_code = process.wait()
+    if return_code != 0:
+        raise RuntimeError(f"DDL sync script returned exit code {return_code}")
 
 
 def ddl_sync_loop() -> None:

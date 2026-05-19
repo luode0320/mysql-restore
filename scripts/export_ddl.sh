@@ -58,6 +58,7 @@ else
   echo "[$(date '+%F %T')] mysqldump does not support --column-statistics, skip it"
 fi
 
+echo "[$(date '+%F %T')] query database list with pattern: $DB_NAME_PATTERN"
 DATABASES="$(mysql "${MYSQL_ARGS[@]}" -e "
   SELECT SCHEMA_NAME
   FROM information_schema.SCHEMATA
@@ -71,11 +72,14 @@ if [[ -z "$DATABASES" ]]; then
   exit 0
 fi
 
+DATABASE_COUNT="$(grep -c . <<< "$DATABASES" || true)"
+echo "[$(date '+%F %T')] matched database count: $DATABASE_COUNT"
 echo "[$(date '+%F %T')] start ddl sync from $DB_HOST:$DB_PORT"
 while IFS= read -r database; do
   [[ -z "$database" ]] && continue
   db_dir="$DDL_TMP_DIR/$database"
   mkdir -p "$db_dir"
+  echo "[$(date '+%F %T')] sync database: $database"
 
   TABLES="$(mysql "${MYSQL_ARGS[@]}" -e "
     SELECT TABLE_NAME
@@ -84,9 +88,12 @@ while IFS= read -r database; do
     ORDER BY TABLE_NAME;
   ")"
 
+  TABLE_COUNT="$(grep -c . <<< "$TABLES" || true)"
+  echo "[$(date '+%F %T')] database $database table count: $TABLE_COUNT"
   while IFS= read -r table; do
     [[ -z "$table" ]] && continue
     out_file="$db_dir/$table.sql"
+    echo "[$(date '+%F %T')] dump table: $database.$table -> $out_file"
     mysqldump "${DUMP_ARGS[@]}" "$database" "$table" > "$out_file"
   done <<< "$TABLES"
 done <<< "$DATABASES"
@@ -94,9 +101,13 @@ done <<< "$DATABASES"
 echo "[$(date '+%F %T')] refresh ddl backup"
 rm -rf "$DDL_BACKUP_DIR"
 if [[ -d "$DDL_DIR" ]]; then
+  echo "[$(date '+%F %T')] move current ddl to backup: $DDL_BACKUP_DIR"
   mv "$DDL_DIR" "$DDL_BACKUP_DIR"
+else
+  echo "[$(date '+%F %T')] current ddl dir not found, skip backup"
 fi
 
+echo "[$(date '+%F %T')] publish new ddl: $DDL_DIR"
 mv "$DDL_TMP_DIR" "$DDL_DIR"
 trap - EXIT
 echo "[$(date '+%F %T')] ddl sync done"
