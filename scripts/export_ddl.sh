@@ -22,22 +22,30 @@ RESTORE_ROOT="${RESTORE_ROOT:-/usr/local/src/restoredb}"
 DDL_DIR="${DDL_DIR:-$RESTORE_ROOT/ddl}"
 DDL_BACKUP_DIR="${DDL_BACKUP_DIR:-$RESTORE_ROOT/ddl-backup}"
 DDL_TMP_DIR="${DDL_DIR}.sync-tmp.$$"
+CLIENT_CNF="$(mktemp)"
 
 cleanup_tmp() {
   rm -rf "$DDL_TMP_DIR"
+  rm -f "$CLIENT_CNF"
 }
 trap cleanup_tmp EXIT
 
 rm -rf "$DDL_TMP_DIR"
 mkdir -p "$DDL_TMP_DIR"
 
-export MYSQL_PWD="$DB_PASSWORD"
-MYSQL_ARGS=(-h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" --protocol=tcp --batch --skip-column-names)
+cat > "$CLIENT_CNF" <<EOF
+[client]
+host=$DB_HOST
+port=$DB_PORT
+user=$DB_USER
+password=$DB_PASSWORD
+protocol=tcp
+EOF
+chmod 600 "$CLIENT_CNF"
+
+MYSQL_ARGS=(--defaults-extra-file="$CLIENT_CNF" --batch --skip-column-names)
 DUMP_ARGS=(
-  -h"$DB_HOST"
-  -P"$DB_PORT"
-  -u"$DB_USER"
-  --protocol=tcp
+  --defaults-extra-file="$CLIENT_CNF"
   --no-data
   --skip-lock-tables
   --single-transaction
