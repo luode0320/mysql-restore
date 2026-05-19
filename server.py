@@ -33,7 +33,7 @@ from typing import Any
 ROOT_DIR = Path(__file__).resolve().parent
 APP_INDEX_FILE = ROOT_DIR / "index.html"
 RESTORE_ROOT = Path(os.getenv("RESTORE_ROOT", "/usr/local/src/restoredb"))
-PUBLIC_INDEX_FILE = Path(os.getenv("PUBLIC_INDEX_FILE", str(RESTORE_ROOT / "index.html")))
+PUBLIC_INDEX_FILE = Path(os.getenv("PUBLIC_INDEX_FILE", "/usr/local/src/nginx/public/restoredb/index.html"))
 DDL_ROOT = Path(os.getenv("DDL_DIR", str(RESTORE_ROOT / "ddl")))
 RESTORE_OUTPUT_DIR = Path(os.getenv("RESTORE_OUTPUT_DIR", str(RESTORE_ROOT / "restore-jobs")))
 DDL_BACKUP_ROOT = Path(os.getenv("DDL_BACKUP_DIR", str(RESTORE_ROOT / "ddl-backup")))
@@ -198,8 +198,10 @@ def publish_index_file() -> None:
 
     source = APP_INDEX_FILE.read_text(encoding="utf-8")
     if PUBLIC_INDEX_FILE.exists() and PUBLIC_INDEX_FILE.read_text(encoding="utf-8") == source:
+        print(f"index.html already up to date: {PUBLIC_INDEX_FILE}", flush=True)
         return
     PUBLIC_INDEX_FILE.write_text(source, encoding="utf-8")
+    print(f"index.html published to: {PUBLIC_INDEX_FILE}", flush=True)
 
 
 def json_response(handler: BaseHTTPRequestHandler, payload: dict[str, Any], status_code: int = 200) -> None:
