@@ -16,13 +16,13 @@ python server.py
 http://127.0.0.1:33061
 ```
 
-启动后会把页面发布到：
+启动后直接访问后端页面：
 
 ```text
-/usr/local/src/nginx/public/restoredb/index.html
+http://服务器IP:33061/
 ```
 
-外部 nginx 可以直接引用这个文件作为页面入口。
+也可以访问 `/index.html`，不再需要通过 nginx 静态目录引用页面文件。
 
 ## Docker 运行
 
@@ -39,13 +39,11 @@ docker run -d \
   -e DB_PASSWORD="$DB_PASSWORD" \
   -e PORT=33061 \
   -e RESTORE_ROOT=/usr/local/src/restoredb \
-  -e PUBLIC_INDEX_FILE=/usr/local/src/nginx/public/restoredb/index.html \
   -e DDL_DIR=/usr/local/src/restoredb/ddl \
   -e DDL_BACKUP_DIR=/usr/local/src/restoredb/ddl-backup \
   -e RESTORE_OUTPUT_DIR=/usr/local/src/restoredb/restore-jobs \
   -e SYNC_INTERVAL_SECONDS=3600 \
   -v /usr/local/src/restoredb:/usr/local/src/restoredb \
-  -v /usr/local/src/nginx/public/restoredb:/usr/local/src/nginx/public/restoredb \
   mysql-restore:latest
 ```
 

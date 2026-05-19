@@ -33,7 +33,6 @@ from typing import Any
 ROOT_DIR = Path(__file__).resolve().parent
 APP_INDEX_FILE = ROOT_DIR / "index.html"
 RESTORE_ROOT = Path(os.getenv("RESTORE_ROOT", "/usr/local/src/restoredb"))
-PUBLIC_INDEX_FILE = Path(os.getenv("PUBLIC_INDEX_FILE", "/usr/local/src/nginx/public/restoredb/index.html"))
 DDL_ROOT = Path(os.getenv("DDL_DIR", str(RESTORE_ROOT / "ddl")))
 RESTORE_OUTPUT_DIR = Path(os.getenv("RESTORE_OUTPUT_DIR", str(RESTORE_ROOT / "restore-jobs")))
 DDL_BACKUP_ROOT = Path(os.getenv("DDL_BACKUP_DIR", str(RESTORE_ROOT / "ddl-backup")))
@@ -177,31 +176,9 @@ def ensure_runtime_dirs() -> None:
     """
 
     RESTORE_ROOT.mkdir(parents=True, exist_ok=True)
-    PUBLIC_INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
-    publish_index_file()
     DDL_ROOT.mkdir(parents=True, exist_ok=True)
     DDL_BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     RESTORE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def publish_index_file() -> None:
-    """把页面入口发布到统一挂载根目录。
-
-    [参数]
-    - 无
-
-    [返回]
-    - 无
-
-    最近修改时间: 2026-05-20 00:20:00
-    """
-
-    source = APP_INDEX_FILE.read_text(encoding="utf-8")
-    if PUBLIC_INDEX_FILE.exists() and PUBLIC_INDEX_FILE.read_text(encoding="utf-8") == source:
-        print(f"index.html already up to date: {PUBLIC_INDEX_FILE}", flush=True)
-        return
-    PUBLIC_INDEX_FILE.write_text(source, encoding="utf-8")
-    print(f"index.html published to: {PUBLIC_INDEX_FILE}", flush=True)
 
 
 def json_response(handler: BaseHTTPRequestHandler, payload: dict[str, Any], status_code: int = 200) -> None:
@@ -823,7 +800,7 @@ class RestoreHandler(BaseHTTPRequestHandler):
         """
 
         if self.path == "/" or self.path == "/index.html":
-            text_response(self, PUBLIC_INDEX_FILE.read_text(encoding="utf-8"), content_type="text/html; charset=utf-8")
+            text_response(self, APP_INDEX_FILE.read_text(encoding="utf-8"), content_type="text/html; charset=utf-8")
             return
 
         if self.path == "/api/config":
@@ -834,7 +811,7 @@ class RestoreHandler(BaseHTTPRequestHandler):
                     "dbPort": MYSQL_PORT,
                     "dbUser": MYSQL_USER,
                     "restoreRoot": str(RESTORE_ROOT),
-                    "publicIndex": str(PUBLIC_INDEX_FILE),
+                    "indexUrl": f"http://{HTTP_HOST}:{HTTP_PORT}/",
                     "ddlRoot": str(DDL_ROOT),
                     "ddlBackupRoot": str(DDL_BACKUP_ROOT),
                     "restoreOutputDir": str(RESTORE_OUTPUT_DIR),
