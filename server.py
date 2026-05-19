@@ -45,6 +45,7 @@ MYSQL_PASSWORD = os.getenv("DB_PASSWORD", "")
 MYSQL_BIN = os.getenv("MYSQL_BIN", "mysql")
 HTTP_HOST = os.getenv("HOST", "0.0.0.0")
 HTTP_PORT = int(os.getenv("PORT", "33061"))
+APP_VERSION = os.getenv("APP_VERSION", "dev")
 
 
 @dataclass
@@ -891,6 +892,7 @@ def main() -> None:
     ensure_runtime_dirs()
     start_ddl_sync_worker()
     server = ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), RestoreHandler)
+    print(f"mysql-restore version: {APP_VERSION}")
     print(f"mysql-restore listening on http://{HTTP_HOST}:{HTTP_PORT}")
     print(f"DDL root: {DDL_ROOT}")
     print(f"DDL backup root: {DDL_BACKUP_ROOT}")
