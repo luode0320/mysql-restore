@@ -33,6 +33,31 @@ mkdir -p "$DDL_TMP_DIR"
 
 export MYSQL_PWD="$DB_PASSWORD"
 MYSQL_ARGS=(-h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" --protocol=tcp --batch --skip-column-names)
+DUMP_ARGS=(
+  -h"$DB_HOST"
+  -P"$DB_PORT"
+  -u"$DB_USER"
+  --protocol=tcp
+  --no-data
+  --skip-lock-tables
+  --single-transaction
+  --routines=false
+  --events=false
+  --triggers
+)
+
+DUMP_HELP="$(mysqldump --help 2>&1 || true)"
+if grep -q -- "--set-gtid-purged" <<< "$DUMP_HELP"; then
+  DUMP_ARGS+=(--set-gtid-purged=OFF)
+else
+  echo "[$(date '+%F %T')] mysqldump does not support --set-gtid-purged, skip it"
+fi
+if grep -q -- "--column-statistics" <<< "$DUMP_HELP"; then
+  DUMP_ARGS+=(--column-statistics=0)
+else
+  echo "[$(date '+%F %T')] mysqldump does not support --column-statistics, skip it"
+fi
+
 DATABASES="$(mysql "${MYSQL_ARGS[@]}" -e "
   SELECT SCHEMA_NAME
   FROM information_schema.SCHEMATA
@@ -62,17 +87,7 @@ while IFS= read -r database; do
   while IFS= read -r table; do
     [[ -z "$table" ]] && continue
     out_file="$db_dir/$table.sql"
-    mysqldump -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" \
-      --protocol=tcp \
-      --no-data \
-      --skip-lock-tables \
-      --single-transaction \
-      --routines=false \
-      --events=false \
-      --triggers \
-      --set-gtid-purged=OFF \
-      --column-statistics=0 \
-      "$database" "$table" > "$out_file"
+    mysqldump "${DUMP_ARGS[@]}" "$database" "$table" > "$out_file"
   done <<< "$TABLES"
 done <<< "$DATABASES"
 

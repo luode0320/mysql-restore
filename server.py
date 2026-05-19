@@ -33,7 +33,7 @@ from typing import Any
 ROOT_DIR = Path(__file__).resolve().parent
 APP_INDEX_FILE = ROOT_DIR / "index.html"
 RESTORE_ROOT = Path(os.getenv("RESTORE_ROOT", "/usr/local/src/restoredb"))
-PUBLIC_INDEX_FILE = RESTORE_ROOT / "index.html"
+PUBLIC_INDEX_FILE = Path(os.getenv("PUBLIC_INDEX_FILE", str(RESTORE_ROOT / "index.html")))
 DDL_ROOT = Path(os.getenv("DDL_DIR", str(RESTORE_ROOT / "ddl")))
 RESTORE_OUTPUT_DIR = Path(os.getenv("RESTORE_OUTPUT_DIR", str(RESTORE_ROOT / "restore-jobs")))
 DDL_BACKUP_ROOT = Path(os.getenv("DDL_BACKUP_DIR", str(RESTORE_ROOT / "ddl-backup")))
@@ -177,6 +177,7 @@ def ensure_runtime_dirs() -> None:
     """
 
     RESTORE_ROOT.mkdir(parents=True, exist_ok=True)
+    PUBLIC_INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
     publish_index_file()
     DDL_ROOT.mkdir(parents=True, exist_ok=True)
     DDL_BACKUP_ROOT.mkdir(parents=True, exist_ok=True)

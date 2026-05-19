@@ -27,7 +27,7 @@ jobs:
           script: |
             docker rm -f mysql-restore || true
             docker pull luode0320/mysql-restore:latest
-            mkdir -p /usr/local/src/restoredb/ddl /usr/local/src/restoredb/restore-jobs
+            mkdir -p /usr/local/src/restoredb/ddl /usr/local/src/restoredb/ddl-backup /usr/local/src/restoredb/restore-jobs /usr/local/src/nginx/public/restoredb
             docker run -d \
               --network host \
               --restart=always \
@@ -37,10 +37,11 @@ jobs:
               -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
               -e RESTORE_ROOT=/usr/local/src/restoredb \
               -e DDL_DIR=/usr/local/src/restoredb/ddl \
+              -e DDL_BACKUP_DIR=/usr/local/src/restoredb/ddl-backup \
               -e RESTORE_OUTPUT_DIR=/usr/local/src/restoredb/restore-jobs \
+              -e PUBLIC_INDEX_FILE=/usr/local/src/nginx/public/restoredb/index.html \
               -e PORT="${{ vars.PORT || '33061' }}" \
               -v /usr/local/src/restoredb:/usr/local/src/restoredb \
-              -v /usr/local/src/mysql-data:/usr/local/src/mysql-data \
-              -v /var/lib:/var/lib \
+              -v /usr/local/src/nginx/public/restoredb:/usr/local/src/nginx/public/restoredb \
               --name mysql-restore \
               luode0320/mysql-restore:latest
