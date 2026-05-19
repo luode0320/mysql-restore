@@ -14,8 +14,11 @@ jobs:
       - name: Build and push image
         run: |
           echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login -u luode0320 --password-stdin
-          docker build --pull --no-cache --build-arg APP_VERSION="${{ github.sha }}" -t luode0320/mysql-restore:latest .
+          docker build --pull --no-cache --build-arg APP_VERSION="${{ github.sha }}" \
+            -t luode0320/mysql-restore:latest \
+            -t luode0320/mysql-restore:${{ github.sha }} .
           docker push luode0320/mysql-restore:latest
+          docker push luode0320/mysql-restore:${{ github.sha }}
 
       - name: Deploy helper container
         uses: appleboy/ssh-action@master
@@ -26,12 +29,17 @@ jobs:
           port: 22
           script: |
             docker rm -f mysql-restore || true
+            docker ps -aq --filter "label=app=mysql-restore" | xargs -r docker rm -f
+            docker ps -aq --filter "ancestor=luode0320/mysql-restore:latest" | xargs -r docker rm -f
+            docker ps -aq --filter "ancestor=luode0320/mysql-restore:${{ github.sha }}" | xargs -r docker rm -f
             docker image rm luode0320/mysql-restore:latest || true
-            docker pull luode0320/mysql-restore:latest
+            docker image rm luode0320/mysql-restore:${{ github.sha }} || true
+            docker pull luode0320/mysql-restore:${{ github.sha }}
             mkdir -p /usr/local/src/restoredb/ddl /usr/local/src/restoredb/ddl-backup /usr/local/src/restoredb/restore-jobs
             docker run -d \
               --network host \
               --restart=always \
+              --label app=mysql-restore \
               -e DB_HOST=127.0.0.1 \
               -e DB_PORT=33060 \
               -e DB_USER=root \
@@ -44,7 +52,8 @@ jobs:
               -e PORT="${{ vars.PORT || '33061' }}" \
               -v /usr/local/src/restoredb:/usr/local/src/restoredb \
               --name mysql-restore \
-              luode0320/mysql-restore:latest
-            docker exec mysql-restore grep -n "defaults-extra-file" /app/scripts/export_ddl.sh
-            docker exec mysql-restore grep -n "ddl sync command" /app/server.py
+              luode0320/mysql-restore:${{ github.sha }}
+            docker exec mysql-restore test ! -e /app/scripts/export_ddl.sh
+            docker exec mysql-restore grep -n "def run_ddl_sync_once" /app/server.py
+            docker exec mysql-restore grep -n "dump_table_ddl" /app/server.py
             docker logs --tail 20 mysql-restore

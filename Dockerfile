@@ -10,8 +10,6 @@ RUN apt-get update \
 WORKDIR /app
 COPY index.html /app/index.html
 COPY server.py /app/server.py
-COPY scripts/ /app/scripts/
-RUN mkdir -p /usr/local/src/restoredb \
-  && chmod +x /app/scripts/*.sh
+RUN mkdir -p /usr/local/src/restoredb
 
 ENTRYPOINT ["python", "/app/server.py"]

@@ -111,7 +111,7 @@ SYNC_INTERVAL_SECONDS=3600
 
 如果新 DDL 生成失败，当前 `/usr/local/src/restoredb/ddl` 不会被替换。
 
-也可以手动执行 [scripts/export_ddl.sh](scripts/export_ddl.sh) 立即同步一次。设置 `SYNC_INTERVAL_SECONDS=0` 可以关闭服务内置的定时同步线程。
+DDL 同步逻辑已经内置在 `server.py` 中，不再依赖 `scripts/export_ddl.sh`。设置 `SYNC_INTERVAL_SECONDS=0` 可以关闭服务内置的定时同步线程。
 
 ## API
 

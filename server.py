@@ -36,13 +36,14 @@ RESTORE_ROOT = Path(os.getenv("RESTORE_ROOT", "/usr/local/src/restoredb"))
 DDL_ROOT = Path(os.getenv("DDL_DIR", str(RESTORE_ROOT / "ddl")))
 RESTORE_OUTPUT_DIR = Path(os.getenv("RESTORE_OUTPUT_DIR", str(RESTORE_ROOT / "restore-jobs")))
 DDL_BACKUP_ROOT = Path(os.getenv("DDL_BACKUP_DIR", str(RESTORE_ROOT / "ddl-backup")))
-DDL_SYNC_SCRIPT = Path(os.getenv("DDL_SYNC_SCRIPT", str(ROOT_DIR / "scripts" / "export_ddl.sh")))
 SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "3600"))
 MYSQL_HOST = os.getenv("DB_HOST", "127.0.0.1")
 MYSQL_PORT = os.getenv("DB_PORT", "33060")
 MYSQL_USER = os.getenv("DB_USER", "root")
 MYSQL_PASSWORD = os.getenv("DB_PASSWORD", "")
 MYSQL_BIN = os.getenv("MYSQL_BIN", "mysql")
+MYSQLDUMP_BIN = os.getenv("MYSQLDUMP_BIN", "mysqldump")
+DB_NAME_PATTERN = os.getenv("DB_NAME_PATTERN", "%")
 HTTP_HOST = os.getenv("HOST", "0.0.0.0")
 HTTP_PORT = int(os.getenv("PORT", "33061"))
 APP_VERSION = os.getenv("APP_VERSION", "dev")
@@ -355,8 +356,176 @@ def mysql_run(sql_text: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def mysql_query_lines(sql_text: str) -> list[str]:
+    """执行查询 SQL 并按行返回结果。
+
+    [参数]
+    - sql_text: 查询 SQL 文本
+
+    [返回]
+    - 去掉空行后的结果行列表
+
+    最近修改时间: 2026-05-20 01:10:00
+    """
+
+    env = os.environ.copy()
+    env["MYSQL_PWD"] = MYSQL_PASSWORD
+    cmd = [
+        MYSQL_BIN,
+        "-h",
+        MYSQL_HOST,
+        "-P",
+        str(MYSQL_PORT),
+        "-u",
+        MYSQL_USER,
+        "--protocol=tcp",
+        "--batch",
+        "--skip-column-names",
+        "-e",
+        sql_text,
+    ]
+    result = subprocess.run(
+        cmd,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or "mysql query returned non-zero exit code"
+        raise RuntimeError(stderr)
+    if result.stderr.strip():
+        print(result.stderr.strip(), flush=True)
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def escape_sql_string(value: str) -> str:
+    """转义 SQL 字符串字面量。
+
+    [参数]
+    - value: 原始字符串
+
+    [返回]
+    - 可放入单引号字符串的内容
+
+    最近修改时间: 2026-05-20 01:10:00
+    """
+
+    return value.replace("\\", "\\\\").replace("'", "''")
+
+
+def build_mysqldump_args() -> list[str]:
+    """构造当前 mysqldump 支持的参数列表。
+
+    [参数]
+    - 无
+
+    [返回]
+    - mysqldump 基础参数
+
+    最近修改时间: 2026-05-20 01:10:00
+    """
+
+    args = [
+        MYSQLDUMP_BIN,
+        "-h",
+        MYSQL_HOST,
+        "-P",
+        str(MYSQL_PORT),
+        "-u",
+        MYSQL_USER,
+        "--protocol=tcp",
+        "--no-data",
+        "--skip-lock-tables",
+        "--single-transaction",
+        "--routines=false",
+        "--events=false",
+        "--triggers",
+    ]
+    help_result = subprocess.run(
+        [MYSQLDUMP_BIN, "--help"],
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+    help_text = f"{help_result.stdout}\n{help_result.stderr}"
+    if "--set-gtid-purged" in help_text:
+        args.append("--set-gtid-purged=OFF")
+    else:
+        print(f"[{time.strftime('%F %T')}] mysqldump does not support --set-gtid-purged, skip it", flush=True)
+    if "--column-statistics" in help_text:
+        args.append("--column-statistics=0")
+    else:
+        print(f"[{time.strftime('%F %T')}] mysqldump does not support --column-statistics, skip it", flush=True)
+    return args
+
+
+def dump_table_ddl(dump_args: list[str], database: str, table: str, output_file: Path) -> None:
+    """导出单表 DDL 到目标文件。
+
+    [参数]
+    - dump_args: mysqldump 基础参数
+    - database: 库名
+    - table: 表名
+    - output_file: 输出 SQL 文件
+
+    [返回]
+    - 无，失败时抛出异常
+
+    最近修改时间: 2026-05-20 01:10:00
+    """
+
+    env = os.environ.copy()
+    env["MYSQL_PWD"] = MYSQL_PASSWORD
+    cmd = [*dump_args, database, table]
+    with output_file.open("w", encoding="utf-8") as fp:
+        result = subprocess.run(
+            cmd,
+            stdout=fp,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            env=env,
+            check=False,
+        )
+    if result.returncode != 0:
+        if output_file.exists():
+            output_file.unlink()
+        stderr = result.stderr.strip() or "mysqldump returned non-zero exit code"
+        raise RuntimeError(stderr)
+    if result.stderr.strip():
+        print(result.stderr.strip(), flush=True)
+
+
+def publish_synced_ddl(tmp_dir: Path) -> None:
+    """发布新 DDL 并刷新旧 DDL 备份。
+
+    [参数]
+    - tmp_dir: 已生成完成的新 DDL 临时目录
+
+    [返回]
+    - 无
+
+    最近修改时间: 2026-05-20 01:10:00
+    """
+
+    print(f"[{time.strftime('%F %T')}] refresh ddl backup", flush=True)
+    if DDL_BACKUP_ROOT.exists():
+        shutil.rmtree(DDL_BACKUP_ROOT)
+    if DDL_ROOT.exists():
+        print(f"[{time.strftime('%F %T')}] move current ddl to backup: {DDL_BACKUP_ROOT}", flush=True)
+        DDL_ROOT.replace(DDL_BACKUP_ROOT)
+    else:
+        print(f"[{time.strftime('%F %T')}] current ddl dir not found, skip backup", flush=True)
+
+    print(f"[{time.strftime('%F %T')}] publish new ddl: {DDL_ROOT}", flush=True)
+    tmp_dir.replace(DDL_ROOT)
+
+
 def run_ddl_sync_once() -> None:
-    """执行一次 DDL 同步脚本。
+    """执行一次 DDL 同步。
 
     [参数]
     - 无
@@ -364,43 +533,56 @@ def run_ddl_sync_once() -> None:
     [返回]
     - 无，失败时抛出异常
 
-    最近修改时间: 2026-05-20 00:35:00
+    最近修改时间: 2026-05-20 01:10:00
     """
 
-    if not DDL_SYNC_SCRIPT.exists():
-        raise FileNotFoundError(f"DDL 同步脚本不存在: {DDL_SYNC_SCRIPT}")
+    tmp_dir = DDL_ROOT.with_name(f"{DDL_ROOT.name}.sync-tmp.{os.getpid()}.{int(time.time())}")
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    env = os.environ.copy()
-    env["RESTORE_ROOT"] = str(RESTORE_ROOT)
-    env["DDL_DIR"] = str(DDL_ROOT)
-    env["DDL_BACKUP_DIR"] = str(DDL_BACKUP_ROOT)
-    env["DB_HOST"] = MYSQL_HOST
-    env["DB_PORT"] = str(MYSQL_PORT)
-    env["DB_USER"] = MYSQL_USER
-    env["DB_PASSWORD"] = MYSQL_PASSWORD
+    try:
+        print(f"[{time.strftime('%F %T')}] query database list with pattern: {DB_NAME_PATTERN}", flush=True)
+        database_sql = f"""
+            SELECT SCHEMA_NAME
+            FROM information_schema.SCHEMATA
+            WHERE SCHEMA_NAME LIKE '{escape_sql_string(DB_NAME_PATTERN)}'
+              AND SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+            ORDER BY SCHEMA_NAME;
+        """
+        databases = mysql_query_lines(database_sql)
+        if not databases:
+            print(f"[{time.strftime('%F %T')}] no databases matched pattern: {DB_NAME_PATTERN}", flush=True)
+            shutil.rmtree(tmp_dir)
+            return
 
-    bash_path = shutil.which("bash")
-    if bash_path:
-        cmd = [bash_path, str(DDL_SYNC_SCRIPT)]
-    else:
-        cmd = [str(DDL_SYNC_SCRIPT)]
+        print(f"[{time.strftime('%F %T')}] matched database count: {len(databases)}", flush=True)
+        print(f"[{time.strftime('%F %T')}] start ddl sync from {MYSQL_HOST}:{MYSQL_PORT}", flush=True)
+        dump_args = build_mysqldump_args()
+        for database in databases:
+            db_dir = tmp_dir / database
+            db_dir.mkdir(parents=True, exist_ok=True)
+            print(f"[{time.strftime('%F %T')}] sync database: {database}", flush=True)
+            table_sql = f"""
+                SELECT TABLE_NAME
+                FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = '{escape_sql_string(database)}'
+                  AND TABLE_TYPE = 'BASE TABLE'
+                ORDER BY TABLE_NAME;
+            """
+            tables = mysql_query_lines(table_sql)
+            print(f"[{time.strftime('%F %T')}] database {database} table count: {len(tables)}", flush=True)
+            for table in tables:
+                output_file = db_dir / f"{table}.sql"
+                print(f"[{time.strftime('%F %T')}] dump table: {database}.{table} -> {output_file}", flush=True)
+                dump_table_ddl(dump_args, database, table, output_file)
 
-    print(f"[{time.strftime('%F %T')}] ddl sync command: {' '.join(cmd)}", flush=True)
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        env=env,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        print(line.rstrip(), flush=True)
-
-    return_code = process.wait()
-    if return_code != 0:
-        raise RuntimeError(f"DDL sync script returned exit code {return_code}")
+        publish_synced_ddl(tmp_dir)
+        print(f"[{time.strftime('%F %T')}] ddl sync done", flush=True)
+    except Exception:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+        raise
 
 
 def ddl_sync_loop() -> None:
