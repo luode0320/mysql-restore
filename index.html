@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mysql-restore</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1017;
+      --panel: #111a24;
+      --panel-2: #172331;
+      --line: #27384c;
+      --text: #edf4ff;
+      --muted: #9babc0;
+      --accent: #5ed3f3;
+      --accent-2: #7be0a6;
+      --warning: #ffd166;
+      --danger: #ff7f9f;
+      --success: #58d68d;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.32);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, #080c12 0%, var(--bg) 54%, #09121a 100%);
+      color: var(--text);
+      font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .shell {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 28px 20px 40px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .hero-main,
+    .hero-side,
+    .panel {
+      background: rgba(17, 26, 36, 0.96);
+      border: 1px solid rgba(126, 159, 196, 0.16);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-main {
+      padding: 28px;
+      min-height: 238px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .eyebrow {
+      margin: 0 0 14px;
+      color: var(--accent);
+      letter-spacing: 0;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 4vw, 54px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      margin: 16px 0 0;
+      max-width: 68ch;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .hero-meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 20px;
+    }
+
+    .chip {
+      padding: 8px 12px;
+      border: 1px solid rgba(94, 211, 243, 0.2);
+      border-radius: 999px;
+      background: rgba(23, 35, 49, 0.9);
+      color: var(--text);
+    }
+
+    .hero-side {
+      padding: 18px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .stat {
+      padding: 14px;
+      background: var(--panel-2);
+      border: 1px solid rgba(126, 159, 196, 0.14);
+      border-radius: var(--radius);
+    }
+
+    .stat strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 17px;
+      color: var(--accent-2);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      padding: 20px;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+
+    .field {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    input {
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #0d141e;
+      color: var(--text);
+      padding: 13px 14px;
+      font: inherit;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: rgba(94, 211, 243, 0.58);
+      box-shadow: 0 0 0 3px rgba(94, 211, 243, 0.12);
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    button {
+      min-height: 42px;
+      border: 0;
+      border-radius: var(--radius);
+      padding: 11px 14px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #04111c;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
+    .warning {
+      color: #2b2105;
+      background: var(--warning);
+    }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .step {
+      border: 1px solid rgba(126, 159, 196, 0.14);
+      border-radius: var(--radius);
+      background: #0d141e;
+      padding: 12px;
+    }
+
+    code {
+      color: #cfe8ff;
+      overflow-wrap: anywhere;
+    }
+
+    pre {
+      margin: 8px 0 0;
+      padding: 10px;
+      border-radius: var(--radius);
+      background: #090f16;
+      border: 1px solid var(--line);
+      overflow: auto;
+      color: #d7e4f7;
+      font-size: 12px;
+    }
+
+    .sidebar {
+      display: grid;
+      gap: 18px;
+    }
+
+    .status {
+      display: grid;
+      gap: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      width: fit-content;
+      background: rgba(126, 159, 196, 0.14);
+      color: var(--text);
+    }
+
+    .badge.success { background: rgba(88, 214, 141, 0.14); color: var(--success); }
+    .badge.failed { background: rgba(255, 127, 159, 0.14); color: var(--danger); }
+    .badge.running { background: rgba(94, 211, 243, 0.14); color: var(--accent); }
+
+    .logbox {
+      min-height: 260px;
+      max-height: 420px;
+      overflow: auto;
+      white-space: pre-wrap;
+      background: #0d141e;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px;
+      color: #d7e4f7;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 920px) {
+      .hero,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="hero-main">
+        <div>
+          <p class="eyebrow">mysql restore console</p>
+          <h1>IBD 表空间恢复</h1>
+          <p class="lead">
+            页面只指定恢复对象，工具负责根据 DDL 创建库表、丢弃表空间和导入表空间。
+            IBD 文件或库目录由人工移动到新的 MySQL data 目录，工具容器不会移动宿主机或其他 MySQL 容器里的数据文件。
+          </p>
+        </div>
+        <div class="hero-meta">
+          <span class="chip">输入 binance</span>
+          <span class="chip">输入 binance/user.ibd</span>
+          <span class="chip">人工移动 IBD</span>
+        </div>
+      </div>
+      <aside class="hero-side">
+        <div class="stat">
+          准备阶段
+          <strong>建库建表 + DISCARD</strong>
+        </div>
+        <div class="stat">
+          人工步骤
+          <strong>mv IBD 到新 data 目录</strong>
+        </div>
+        <div class="stat">
+          导入阶段
+          <strong>IMPORT TABLESPACE</strong>
+        </div>
+      </aside>
+    </section>
+
+    <section class="grid">
+      <div class="panel">
+        <h2>恢复任务</h2>
+        <div class="field">
+          <label for="restoreTarget">恢复对象</label>
+          <input id="restoreTarget" placeholder="binance 或 binance/user.ibd" autocomplete="off" />
+          <span class="hint">填写库名会恢复该库 DDL 目录下的所有表；填写 库名/表名.ibd 只恢复单表。</span>
+        </div>
+        <div class="actions">
+          <button id="prepareBtn">准备恢复</button>
+          <button id="importBtn" class="warning">导入表空间</button>
+          <button id="refreshBtn" class="secondary">刷新任务</button>
+        </div>
+      </div>
+
+      <div class="sidebar">
+        <div class="panel">
+          <h2>执行步骤示例</h2>
+          <div class="steps">
+            <div class="step">
+              1. 先点准备恢复，让 MySQL 创建空表并执行 <code>DISCARD TABLESPACE</code>。
+            </div>
+            <div class="step">
+              2. 手动移动整个库目录：
+              <pre>mv /old-mysql-data/binance /new-mysql-data/binance</pre>
+              或手动移动单表文件：
+              <pre>mv /old-mysql-data/binance/user.ibd /new-mysql-data/binance/user.ibd</pre>
+            </div>
+            <div class="step">
+              3. 回到页面输入 <code>binance</code> 或 <code>binance/user.ibd</code>，点击导入表空间。
+            </div>
+          </div>
+        </div>
+
+        <div class="panel status">
+          <h2>当前状态</h2>
+          <div id="statusBadge" class="badge">未开始</div>
+          <div id="taskMeta" class="hint">等待输入恢复对象。</div>
+          <div id="logbox" class="logbox">日志会出现在这里。</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const restoreTargetEl = document.getElementById('restoreTarget');
+    const prepareBtn = document.getElementById('prepareBtn');
+    const importBtn = document.getElementById('importBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const statusBadge = document.getElementById('statusBadge');
+    const taskMeta = document.getElementById('taskMeta');
+    const logbox = document.getElementById('logbox');
+    let currentTaskId = '';
+
+    function setBadge(status) {
+      statusBadge.className = 'badge';
+      if (status === 'success') statusBadge.classList.add('success');
+      if (status === 'failed') statusBadge.classList.add('failed');
+      if (status === 'running') statusBadge.classList.add('running');
+      const map = {
+        pending: '等待中',
+        running: '执行中',
+        success: '已完成',
+        failed: '失败',
+      };
+      statusBadge.textContent = map[status] || '未开始';
+    }
+
+    function renderTask(task) {
+      setBadge(task.status);
+      taskMeta.textContent = `任务 ${task.id} | 阶段 ${task.phase} | 对象 ${task.restoreTarget} | 表数量 ${(task.tables || []).length}`;
+      logbox.textContent = (task.logs || []).join('\n') || '日志会出现在这里。';
+      if (task.error) {
+        logbox.textContent += `\n\n错误: ${task.error}`;
+      }
+    }
+
+    async function pollTask(taskId) {
+      if (!taskId) return;
+      const res = await fetch(`/api/tasks/${taskId}`);
+      if (!res.ok) return;
+      const task = await res.json();
+      renderTask(task);
+      if (task.status === 'running' || task.status === 'pending') {
+        setTimeout(() => pollTask(taskId), 1200);
+      }
+    }
+
+    async function startTask(phase) {
+      const restoreTarget = restoreTargetEl.value.trim();
+      if (!restoreTarget) {
+        taskMeta.textContent = '请先输入恢复对象，例如 binance 或 binance/user.ibd。';
+        return;
+      }
+
+      prepareBtn.disabled = true;
+      importBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/restore/${phase}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ restoreTarget }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          taskMeta.textContent = data.error || '任务创建失败';
+          return;
+        }
+        currentTaskId = data.taskId;
+        setBadge(data.status);
+        taskMeta.textContent = `任务 ${data.taskId} 已创建，阶段 ${data.phase}。`;
+        logbox.textContent = '正在等待任务日志...';
+        pollTask(data.taskId);
+      } catch (err) {
+        taskMeta.textContent = err.message;
+      } finally {
+        prepareBtn.disabled = false;
+        importBtn.disabled = false;
+      }
+    }
+
+    prepareBtn.addEventListener('click', () => startTask('prepare'));
+    importBtn.addEventListener('click', () => startTask('import'));
+    refreshBtn.addEventListener('click', () => pollTask(currentTaskId));
+    setBadge('pending');
+  </script>
+</body>
+</html>

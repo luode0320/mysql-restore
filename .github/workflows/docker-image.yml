@@ -1,0 +1,46 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push image
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login -u luode0320 --password-stdin
+          docker build -t luode0320/mysql-restore:latest .
+          docker push luode0320/mysql-restore:latest
+
+      - name: Deploy helper container
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.REMOTE_HOST }}
+          username: root
+          password: ${{ secrets.REMOTE_PASSWORD }}
+          port: 22
+          script: |
+            docker rm -f mysql-restore || true
+            docker pull luode0320/mysql-restore:latest
+            mkdir -p /usr/local/src/restoredb/ddl /usr/local/src/restoredb/restore-jobs
+            docker run -d \
+              --network host \
+              --restart=always \
+              -e DB_HOST=127.0.0.1 \
+              -e DB_PORT=33060 \
+              -e DB_USER=root \
+              -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              -e RESTORE_ROOT=/usr/local/src/restoredb \
+              -e DDL_DIR=/usr/local/src/restoredb/ddl \
+              -e RESTORE_OUTPUT_DIR=/usr/local/src/restoredb/restore-jobs \
+              -e PORT="${{ vars.PORT || '33061' }}" \
+              -v /usr/local/src/restoredb:/usr/local/src/restoredb \
+              -v /usr/local/src/mysql-data:/usr/local/src/mysql-data \
+              -v /var/lib:/var/lib \
+              --name mysql-restore \
+              luode0320/mysql-restore:latest
