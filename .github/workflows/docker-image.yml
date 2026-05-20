@@ -39,6 +39,7 @@ jobs:
               -e DB_PORT=33060 \
               -e DB_USER=root \
               -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              -e DB_SSL_MODE=DISABLED \
               -e RESTORE_ROOT=/usr/local/src/restoredb \
               -e DDL_DIR=/usr/local/src/restoredb/ddl \
               -e DDL_BACKUP_DIR=/usr/local/src/restoredb/ddl-backup \

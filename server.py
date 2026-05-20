@@ -44,6 +44,7 @@ MYSQL_PASSWORD = os.getenv("DB_PASSWORD", "")
 MYSQL_BIN = os.getenv("MYSQL_BIN", "mysql")
 MYSQLDUMP_BIN = os.getenv("MYSQLDUMP_BIN", "mysqldump")
 DB_NAME_PATTERN = os.getenv("DB_NAME_PATTERN", "%")
+DB_SSL_MODE = os.getenv("DB_SSL_MODE", "DISABLED")
 HTTP_HOST = os.getenv("HOST", "0.0.0.0")
 HTTP_PORT = int(os.getenv("PORT", "33061"))
 APP_VERSION = os.getenv("APP_VERSION", "dev")
@@ -321,6 +322,66 @@ def parse_restore_target(value: str) -> RestoreTarget:
     raise ValueError("恢复对象格式错误，请填写 binance 或 binance/user.ibd")
 
 
+def detect_ssl_args(client_bin: str) -> list[str]:
+    """根据客户端能力生成 SSL 参数。
+
+    [参数]
+    - client_bin: mysql 或 mysqldump 可执行文件
+
+    [返回]
+    - 当前客户端支持的 SSL 选项
+
+    最近修改时间: 2026-05-20 14:20:00
+    """
+
+    if not DB_SSL_MODE:
+        return []
+    try:
+        help_result = subprocess.run(
+            [client_bin, "--help"],
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return []
+    help_text = f"{help_result.stdout}\n{help_result.stderr}"
+    normalized_mode = DB_SSL_MODE.upper()
+    if "--ssl-mode" in help_text:
+        return [f"--ssl-mode={normalized_mode}"]
+    if normalized_mode == "DISABLED" and "--ssl=0" in help_text:
+        return ["--ssl=0"]
+    if normalized_mode == "DISABLED" and "--skip-ssl" in help_text:
+        return ["--skip-ssl"]
+    return []
+
+
+def build_mysql_base_args(client_bin: str) -> list[str]:
+    """构造 mysql 客户端基础连接参数。
+
+    [参数]
+    - client_bin: mysql 或 mysqldump 可执行文件
+
+    [返回]
+    - 基础命令参数列表
+
+    最近修改时间: 2026-05-20 14:20:00
+    """
+
+    return [
+        client_bin,
+        "-h",
+        MYSQL_HOST,
+        "-P",
+        str(MYSQL_PORT),
+        "-u",
+        MYSQL_USER,
+        "--protocol=tcp",
+        *detect_ssl_args(client_bin),
+    ]
+
+
 def mysql_run(sql_text: str) -> subprocess.CompletedProcess[str]:
     """执行一段 SQL。
 
@@ -335,16 +396,7 @@ def mysql_run(sql_text: str) -> subprocess.CompletedProcess[str]:
 
     env = os.environ.copy()
     env["MYSQL_PWD"] = MYSQL_PASSWORD
-    cmd = [
-        MYSQL_BIN,
-        "-h",
-        MYSQL_HOST,
-        "-P",
-        str(MYSQL_PORT),
-        "-u",
-        MYSQL_USER,
-        "--protocol=tcp",
-    ]
+    cmd = build_mysql_base_args(MYSQL_BIN)
     return subprocess.run(
         cmd,
         input=sql_text,
@@ -371,14 +423,7 @@ def mysql_query_lines(sql_text: str) -> list[str]:
     env = os.environ.copy()
     env["MYSQL_PWD"] = MYSQL_PASSWORD
     cmd = [
-        MYSQL_BIN,
-        "-h",
-        MYSQL_HOST,
-        "-P",
-        str(MYSQL_PORT),
-        "-u",
-        MYSQL_USER,
-        "--protocol=tcp",
+        *build_mysql_base_args(MYSQL_BIN),
         "--batch",
         "--skip-column-names",
         "-e",
@@ -428,14 +473,7 @@ def build_mysqldump_args() -> list[str]:
     """
 
     args = [
-        MYSQLDUMP_BIN,
-        "-h",
-        MYSQL_HOST,
-        "-P",
-        str(MYSQL_PORT),
-        "-u",
-        MYSQL_USER,
-        "--protocol=tcp",
+        *build_mysql_base_args(MYSQLDUMP_BIN),
         "--no-data",
         "--skip-lock-tables",
         "--single-transaction",
@@ -818,6 +856,46 @@ def build_import_sql(database: str, table: str) -> str:
     return f"USE {quote_identifier(database)};\nSET FOREIGN_KEY_CHECKS=0;\nALTER TABLE {quote_identifier(table)} IMPORT TABLESPACE;\nSET FOREIGN_KEY_CHECKS=1;"
 
 
+def build_table_probe_sql(database: str, table: str) -> str:
+    """构造表可读性探测 SQL。
+
+    [参数]
+    - database: 库名
+    - table: 表名
+
+    [返回]
+    - SELECT 探测 SQL
+
+    最近修改时间: 2026-05-20 14:40:00
+    """
+
+    return f"SELECT 1 FROM {quote_identifier(database)}.{quote_identifier(table)} LIMIT 1;"
+
+
+def is_table_already_imported(database: str, table: str, task: RestoreTask) -> bool:
+    """判断表是否已经成功导入且可读。
+
+    [参数]
+    - database: 库名
+    - table: 表名
+    - task: 当前恢复任务
+
+    [返回]
+    - True 表示表已经可读，可以跳过导入
+
+    最近修改时间: 2026-05-20 14:40:00
+    """
+
+    result = mysql_run(build_table_probe_sql(database, table))
+    if result.returncode == 0:
+        return True
+
+    stderr = result.stderr.strip()
+    if stderr:
+        task.append_log(f"{database}.{table} 可读性检查未通过，将尝试导入: {stderr}")
+    return False
+
+
 def create_restore_artifact(task: RestoreTask, table_name: str, ddl_path: Path) -> None:
     """记录单表恢复产物，方便追溯。
 
@@ -891,6 +969,11 @@ def run_import_task(task: RestoreTask) -> None:
 
     for table_name in task.tables:
         ddl_path = resolve_ddl_file(task.database, table_name)
+        if is_table_already_imported(task.database, table_name, task):
+            task.append_log(f"跳过表 {task.database}.{table_name}: 表已经可读，视为已成功导入")
+            create_restore_artifact(task, table_name, ddl_path)
+            continue
+
         task.append_log(f"导入表 {task.database}.{table_name}")
         try:
             mysql_exec(

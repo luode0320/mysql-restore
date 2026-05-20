@@ -37,6 +37,7 @@ docker run -d \
   -e DB_PORT=33060 \
   -e DB_USER=root \
   -e DB_PASSWORD="$DB_PASSWORD" \
+  -e DB_SSL_MODE=DISABLED \
   -e PORT=33061 \
   -e RESTORE_ROOT=/usr/local/src/restoredb \
   -e DDL_DIR=/usr/local/src/restoredb/ddl \
@@ -49,7 +50,7 @@ docker run -d \
 
 ## 需要准备的东西
 
-- 目标 MySQL 连接信息：`DB_HOST`、`DB_PORT=33060`、`DB_USER`、`DB_PASSWORD`
+- 目标 MySQL 连接信息：`DB_HOST`、`DB_PORT=33060`、`DB_USER`、`DB_PASSWORD`、`DB_SSL_MODE=DISABLED`
 - 程序 HTTP/API 服务端口：`PORT=33061`
 - 已同步的 DDL 文件目录：默认 `/usr/local/src/restoredb/ddl`
 - 旧 DDL 备份目录：默认 `/usr/local/src/restoredb/ddl-backup`
@@ -84,6 +85,8 @@ chmod 660 /usr/local/src/mysql/data/zuokong/*.ibd
 4. 确认新 MySQL 容器内部的 `datadir` 能看到这些 `.ibd` 文件，并且 MySQL 进程有读写权限。
 5. 回到页面使用同一个恢复对象，点击“导入表空间”。
 6. 工具执行 `ALTER TABLE ... IMPORT TABLESPACE` 完成恢复。
+
+整库导入如果中途失败，可以修复问题后再次输入同一个库名执行导入。工具会先检查每张表是否已经可读，已成功导入的表会自动跳过。
 
 ## DDL 同步
 
