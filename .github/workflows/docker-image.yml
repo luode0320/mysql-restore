@@ -38,13 +38,13 @@ jobs:
               -e DB_HOST=127.0.0.1 \
               -e DB_PORT=33060 \
               -e DB_USER=root \
-              -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              -e DB_PASSWORD="Ld588588" \
               -e DB_SSL_MODE=DISABLED \
               -e RESTORE_ROOT=/usr/local/src/restoredb \
               -e DDL_DIR=/usr/local/src/restoredb/ddl \
               -e DDL_BACKUP_DIR=/usr/local/src/restoredb/ddl-backup \
               -e RESTORE_OUTPUT_DIR=/usr/local/src/restoredb/restore-jobs \
-              -e PORT="${{ vars.PORT || '33061' }}" \
+              -e PORT="33061" \
               -v /usr/local/src/restoredb:/usr/local/src/restoredb \
               --name mysql-restore \
               luode0320/mysql-restore:latest
