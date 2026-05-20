@@ -367,14 +367,14 @@
               </div>
               <div class="step">
                 2. 手动移动整个库目录：
-                <pre>mv -f /old-mysql-data/binance /new-mysql-data/binance</pre>
+                <pre>mv -f /apps/mysql8.1/data/xiaoshuo /usr/local/src/mysql/data</pre>
                 或手动移动单表文件：
                 <pre>
-mv -f /old-mysql-data/binance/user.ibd /new-mysql-data/binance/user.ibd</pre
+mv -f /apps/mysql8.1/data/xiaoshuo/user.ibd /usr/local/src/mysql/data/xiaoshuo/user.ibd</pre
                 >
                 <pre>
-chown -R 999:999 /usr/local/src/mysql/data/binance
-chmod 660 /usr/local/src/mysql/data/binance/*.ibd</pre
+chown -R 999:999 /usr/local/src/mysql/data/xiaoshuo
+chmod 660 /usr/local/src/mysql/data/xiaoshuo/*.ibd</pre
                 >
               </div>
               <div class="step">
