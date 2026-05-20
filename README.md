@@ -88,6 +88,10 @@ chmod 660 /usr/local/src/mysql/data/zuokong/*.ibd
 
 整库导入如果中途失败，可以修复问题后再次输入同一个库名执行导入。工具会先检查每张表是否已经可读，已成功导入的表会自动跳过。
 
+大表导入时如果 MySQL 客户端连接断开，工具会等待并重新检查该表是否已经可读。默认检查 6 次，每次间隔 5 秒，可通过 `IMPORT_CONNECTION_RECHECK_ATTEMPTS` 和 `IMPORT_CONNECTION_RECHECK_SECONDS` 调整。
+
+如果连接断开但 MySQL 仍在执行同一张表的 `IMPORT TABLESPACE`，工具会先查询 `performance_schema.processlist` 并等待原导入进程结束，避免重复导入同一张表。默认最多等待 720 次，每次间隔 5 秒，可通过 `IMPORT_PROCESS_WAIT_ATTEMPTS` 和 `IMPORT_PROCESS_WAIT_SECONDS` 调整。
+
 ## DDL 同步
 
 服务启动后会自动同步 DDL，默认每 1 小时执行一次：

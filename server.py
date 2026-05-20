@@ -48,6 +48,10 @@ DB_SSL_MODE = os.getenv("DB_SSL_MODE", "DISABLED")
 HTTP_HOST = os.getenv("HOST", "0.0.0.0")
 HTTP_PORT = int(os.getenv("PORT", "33061"))
 APP_VERSION = os.getenv("APP_VERSION", "dev")
+IMPORT_CONNECTION_RECHECK_SECONDS = int(os.getenv("IMPORT_CONNECTION_RECHECK_SECONDS", "5"))
+IMPORT_CONNECTION_RECHECK_ATTEMPTS = int(os.getenv("IMPORT_CONNECTION_RECHECK_ATTEMPTS", "6"))
+IMPORT_PROCESS_WAIT_SECONDS = int(os.getenv("IMPORT_PROCESS_WAIT_SECONDS", "5"))
+IMPORT_PROCESS_WAIT_ATTEMPTS = int(os.getenv("IMPORT_PROCESS_WAIT_ATTEMPTS", "720"))
 
 
 @dataclass
@@ -702,6 +706,24 @@ def build_import_error_hint(database: str, table: str, stderr: str) -> str:
     最近修改时间: 2026-05-20 01:25:00
     """
 
+    if "ERROR 2013" in stderr or "Lost connection to server during query" in stderr:
+        return "\n".join(
+            [
+                f"排查提示: {database}.{table} 导入过程中 MySQL 连接断开。",
+                "这常见于大表 IMPORT TABLESPACE 执行时间较长、MySQL 重启或网络连接被中断。",
+                "工具会在断连后重新检查该表是否已经可读；如果不可读，可以修复 MySQL 状态后重新执行整库导入，已成功的表会自动跳过。",
+            ]
+        )
+
+    if "ERROR 2026" in stderr or "TLS/SSL error" in stderr:
+        return "\n".join(
+            [
+                f"排查提示: {database}.{table} 导入时发生 TLS/SSL 连接错误。",
+                "请确认部署参数包含 DB_SSL_MODE=DISABLED，并重新构建部署最新镜像。",
+                "修复连接问题后重新执行整库导入，已成功的表会自动跳过。",
+            ]
+        )
+
     if "ERROR 1812" not in stderr and "Tablespace is missing" not in stderr:
         return ""
 
@@ -896,6 +918,95 @@ def is_table_already_imported(database: str, table: str, task: RestoreTask) -> b
     return False
 
 
+def find_running_import_processes(database: str, table: str) -> list[str]:
+    """查询正在执行的同表导入表空间进程。
+
+    [参数]
+    - database: 库名
+    - table: 表名
+
+    [返回]
+    - processlist 描述行列表
+
+    最近修改时间: 2026-05-20 15:10:00
+    """
+
+    table_token = f"ALTER TABLE `{table}` IMPORT TABLESPACE"
+    fallback_token = f"ALTER TABLE {table} IMPORT TABLESPACE"
+    sql = f"""
+        SELECT CONCAT(ID, '|', DB, '|', TIME, '|', STATE, '|', INFO)
+        FROM performance_schema.processlist
+        WHERE COMMAND = 'Query'
+          AND DB = '{escape_sql_string(database)}'
+          AND (
+            INFO LIKE '%{escape_sql_string(table_token)}%'
+            OR INFO LIKE '%{escape_sql_string(fallback_token)}%'
+            OR (INFO LIKE '%IMPORT TABLESPACE%' AND INFO LIKE '%{escape_sql_string(table)}%')
+          )
+        ORDER BY TIME DESC;
+    """
+    try:
+        return mysql_query_lines(sql)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[{time.strftime('%F %T')}] query running import process failed: {exc}", flush=True)
+        return []
+
+
+def wait_for_running_import_process(database: str, table: str, task: RestoreTask) -> bool:
+    """等待同表正在执行的导入进程结束。
+
+    [参数]
+    - database: 库名
+    - table: 表名
+    - task: 当前恢复任务
+
+    [返回]
+    - True 表示曾经发现并等待了导入进程
+
+    最近修改时间: 2026-05-20 15:10:00
+    """
+
+    waited = False
+    for attempt in range(1, IMPORT_PROCESS_WAIT_ATTEMPTS + 1):
+        processes = find_running_import_processes(database, table)
+        if not processes:
+            return waited
+        waited = True
+        task.append_log(
+            f"{database}.{table} 已有 IMPORT TABLESPACE 正在执行，等待 {IMPORT_PROCESS_WAIT_SECONDS}s 后第 {attempt}/{IMPORT_PROCESS_WAIT_ATTEMPTS} 次复查: {processes[0]}"
+        )
+        time.sleep(IMPORT_PROCESS_WAIT_SECONDS)
+    task.append_log(f"{database}.{table} 等待已有 IMPORT TABLESPACE 超时，将停止本次任务以避免重复导入")
+    raise RuntimeError(f"{database}.{table} 已有 IMPORT TABLESPACE 长时间未结束")
+
+
+def wait_for_table_import_after_disconnect(database: str, table: str, task: RestoreTask) -> bool:
+    """导入断连后等待并确认表是否已经可读。
+
+    [参数]
+    - database: 库名
+    - table: 表名
+    - task: 当前恢复任务
+
+    [返回]
+    - True 表示断连后确认表已经可读
+
+    最近修改时间: 2026-05-20 14:55:00
+    """
+
+    wait_for_running_import_process(database, table, task)
+
+    for attempt in range(1, IMPORT_CONNECTION_RECHECK_ATTEMPTS + 1):
+        task.append_log(
+            f"{database}.{table} 导入连接断开，等待 {IMPORT_CONNECTION_RECHECK_SECONDS}s 后第 {attempt}/{IMPORT_CONNECTION_RECHECK_ATTEMPTS} 次检查表是否可读"
+        )
+        time.sleep(IMPORT_CONNECTION_RECHECK_SECONDS)
+        if is_table_already_imported(database, table, task):
+            task.append_log(f"{database}.{table} 断连后检查已可读，视为导入成功")
+            return True
+    return False
+
+
 def create_restore_artifact(task: RestoreTask, table_name: str, ddl_path: Path) -> None:
     """记录单表恢复产物，方便追溯。
 
@@ -969,6 +1080,12 @@ def run_import_task(task: RestoreTask) -> None:
 
     for table_name in task.tables:
         ddl_path = resolve_ddl_file(task.database, table_name)
+        if wait_for_running_import_process(task.database, table_name, task):
+            if is_table_already_imported(task.database, table_name, task):
+                task.append_log(f"跳过表 {task.database}.{table_name}: 已有导入进程结束后表可读，视为已成功导入")
+                create_restore_artifact(task, table_name, ddl_path)
+                continue
+
         if is_table_already_imported(task.database, table_name, task):
             task.append_log(f"跳过表 {task.database}.{table_name}: 表已经可读，视为已成功导入")
             create_restore_artifact(task, table_name, ddl_path)
@@ -982,9 +1099,14 @@ def run_import_task(task: RestoreTask) -> None:
                 f"{task.database}.{table_name} 导入表空间",
             )
         except RuntimeError as exc:
+            error_text = str(exc)
             hint = build_import_error_hint(task.database, table_name, str(exc))
             if hint:
                 task.append_log(hint)
+            if "ERROR 2013" in error_text or "Lost connection to server during query" in error_text:
+                if wait_for_table_import_after_disconnect(task.database, table_name, task):
+                    create_restore_artifact(task, table_name, ddl_path)
+                    continue
             raise
         create_restore_artifact(task, table_name, ddl_path)
 
