@@ -76,12 +76,14 @@ binance/user.ibd
 3. 在宿主机上手动移动原始 IBD 文件或库目录到新 MySQL data 目录。
 
 ```sh
-mv /old-mysql-data/binance /new-mysql-data/binance
-mv /old-mysql-data/binance/user.ibd /new-mysql-data/binance/user.ibd
+mv -f /apps/mysql8.1/data/zuokong /usr/local/src/mysql/data
+chown -R 999:999 /usr/local/src/mysql/data/zuokong
+chmod 660 /usr/local/src/mysql/data/zuokong/*.ibd
 ```
 
-4. 回到页面使用同一个恢复对象，点击“导入表空间”。
-5. 工具执行 `ALTER TABLE ... IMPORT TABLESPACE` 完成恢复。
+4. 确认新 MySQL 容器内部的 `datadir` 能看到这些 `.ibd` 文件，并且 MySQL 进程有读写权限。
+5. 回到页面使用同一个恢复对象，点击“导入表空间”。
+6. 工具执行 `ALTER TABLE ... IMPORT TABLESPACE` 完成恢复。
 
 ## DDL 同步
 

@@ -643,9 +643,39 @@ def mysql_exec(sql_text: str, task: RestoreTask, step_name: str) -> None:
     if result.stdout.strip():
         task.append_log(result.stdout.strip())
     if result.returncode != 0:
+        if "FOREIGN_KEY_CHECKS=0" in sql_text:
+            mysql_run("SET FOREIGN_KEY_CHECKS=1;")
         stderr = result.stderr.strip() or "mysql client returned non-zero exit code"
         raise RuntimeError(f"{step_name} 失败: {stderr}")
     task.append_log(f"{step_name} -> 完成")
+
+
+def build_import_error_hint(database: str, table: str, stderr: str) -> str:
+    """根据导入表空间错误生成排查提示。
+
+    [参数]
+    - database: 库名
+    - table: 表名
+    - stderr: mysql 客户端错误输出
+
+    [返回]
+    - 面向页面日志的中文排查提示
+
+    最近修改时间: 2026-05-20 01:25:00
+    """
+
+    if "ERROR 1812" not in stderr and "Tablespace is missing" not in stderr:
+        return ""
+
+    return "\n".join(
+        [
+            f"排查提示: MySQL 没有在目标 data 目录中找到 {database}/{table}.ibd。",
+            "请确认已经先执行“准备恢复”，再手动移动原始 IBD，最后才执行“导入表空间”。",
+            f"请在新 MySQL 容器或宿主机 data 卷中检查文件是否存在: <mysql-data>/{database}/{table}.ibd",
+            "如果文件存在，请检查文件属主和权限是否允许 MySQL 进程读取，例如 mysql:mysql。",
+            "如果是整库恢复，请确认 DDL 目录中的每张表都已经放入对应的 .ibd 文件；缺少任意一张表都会导致导入停在该表。",
+        ]
+    )
 
 
 def read_sql_file(path: Path) -> str:
@@ -753,7 +783,7 @@ def build_create_table_sql(database: str, ddl_text: str) -> str:
     """
 
     database_name = quote_identifier(database)
-    return f"CREATE DATABASE IF NOT EXISTS {database_name};\nUSE {database_name};\n{ddl_text}\n"
+    return f"SET FOREIGN_KEY_CHECKS=0;\nCREATE DATABASE IF NOT EXISTS {database_name};\nUSE {database_name};\n{ddl_text}\nSET FOREIGN_KEY_CHECKS=1;\n"
 
 
 def build_discard_sql(database: str, table: str) -> str:
@@ -769,7 +799,7 @@ def build_discard_sql(database: str, table: str) -> str:
     最近修改时间: 2026-05-20 00:20:00
     """
 
-    return f"USE {quote_identifier(database)};\nALTER TABLE {quote_identifier(table)} DISCARD TABLESPACE;"
+    return f"USE {quote_identifier(database)};\nSET FOREIGN_KEY_CHECKS=0;\nALTER TABLE {quote_identifier(table)} DISCARD TABLESPACE;\nSET FOREIGN_KEY_CHECKS=1;"
 
 
 def build_import_sql(database: str, table: str) -> str:
@@ -785,7 +815,7 @@ def build_import_sql(database: str, table: str) -> str:
     最近修改时间: 2026-05-20 00:20:00
     """
 
-    return f"USE {quote_identifier(database)};\nALTER TABLE {quote_identifier(table)} IMPORT TABLESPACE;"
+    return f"USE {quote_identifier(database)};\nSET FOREIGN_KEY_CHECKS=0;\nALTER TABLE {quote_identifier(table)} IMPORT TABLESPACE;\nSET FOREIGN_KEY_CHECKS=1;"
 
 
 def create_restore_artifact(task: RestoreTask, table_name: str, ddl_path: Path) -> None:
@@ -862,11 +892,17 @@ def run_import_task(task: RestoreTask) -> None:
     for table_name in task.tables:
         ddl_path = resolve_ddl_file(task.database, table_name)
         task.append_log(f"导入表 {task.database}.{table_name}")
-        mysql_exec(
-            build_import_sql(task.database, table_name),
-            task,
-            f"{task.database}.{table_name} 导入表空间",
-        )
+        try:
+            mysql_exec(
+                build_import_sql(task.database, table_name),
+                task,
+                f"{task.database}.{table_name} 导入表空间",
+            )
+        except RuntimeError as exc:
+            hint = build_import_error_hint(task.database, table_name, str(exc))
+            if hint:
+                task.append_log(hint)
+            raise
         create_restore_artifact(task, table_name, ddl_path)
 
 
