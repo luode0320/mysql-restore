@@ -14,7 +14,7 @@ jobs:
       - name: Build and push image
         run: |
           echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login -u luode0320 --password-stdin
-          docker build -t luode0320/mysql-restore:latest .
+          docker build --pull --no-cache -t luode0320/mysql-restore:latest .
           docker push luode0320/mysql-restore:latest
 
       - name: Deploy helper container
@@ -38,7 +38,7 @@ jobs:
               -e DB_HOST=127.0.0.1 \
               -e DB_PORT=33060 \
               -e DB_USER=root \
-              -e DB_PASSWORD="Ld588588" \
+              -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
               -e DB_SSL_MODE=DISABLED \
               -e RESTORE_ROOT=/usr/local/src/restoredb \
               -e DDL_DIR=/usr/local/src/restoredb/ddl \
