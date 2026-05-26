@@ -43,7 +43,9 @@ docker run -d \
   -e DDL_DIR=/usr/local/src/restoredb/ddl \
   -e DDL_BACKUP_DIR=/usr/local/src/restoredb/ddl-backup \
   -e RESTORE_OUTPUT_DIR=/usr/local/src/restoredb/restore-jobs \
-  -e SYNC_INTERVAL_SECONDS=3600 \
+  -e DDL_SYNC_ENABLED=true \
+  -e DDL_SYNC_DAILY_TIME=00:00 \
+  -e DDL_BACKUP_RETENTION_DAYS=31 \
   -v /usr/local/src/restoredb:/usr/local/src/restoredb \
   mysql-restore:latest
 ```
@@ -94,10 +96,12 @@ chmod 660 /usr/local/src/mysql/data/zuokong/*.ibd
 
 ## DDL 同步
 
-服务启动后会自动同步 DDL，默认每 1 小时执行一次：
+服务启动后会立刻同步一次 DDL，之后默认每天 00:00 再同步一次：
 
 ```text
-SYNC_INTERVAL_SECONDS=3600
+DDL_SYNC_ENABLED=true
+DDL_SYNC_DAILY_TIME=00:00
+DDL_BACKUP_RETENTION_DAYS=31
 ```
 
 生成的 DDL 固定按库名创建目录，一个表对应一个 SQL 文件：
@@ -114,13 +118,13 @@ SYNC_INTERVAL_SECONDS=3600
 
 每次同步会先生成一份新的临时 DDL。生成成功后：
 
-1. 删除上一次的 `/usr/local/src/restoredb/ddl-backup`
-2. 把当前 `/usr/local/src/restoredb/ddl` 移到 `/usr/local/src/restoredb/ddl-backup`
+1. 如果当前 `/usr/local/src/restoredb/ddl` 下存在有效的 `库/表.sql`，先备份到 `/usr/local/src/restoredb/ddl-backup/YYYYmmdd-HHMMSS`
+2. 清理超过 `DDL_BACKUP_RETENTION_DAYS` 天的历史备份
 3. 把新生成的 DDL 发布为 `/usr/local/src/restoredb/ddl`
 
 如果新 DDL 生成失败，当前 `/usr/local/src/restoredb/ddl` 不会被替换。
 
-DDL 同步逻辑已经内置在 `server.py` 中，不再依赖 `scripts/export_ddl.sh`。设置 `SYNC_INTERVAL_SECONDS=0` 可以关闭服务内置的定时同步线程。
+如果当前 DDL 目录没有任何有效的数据库和表 SQL 文件，本次同步不会创建空备份。DDL 同步逻辑已经内置在 `server.py` 中，不再依赖 `scripts/export_ddl.sh`。设置 `DDL_SYNC_ENABLED=false` 可以关闭服务内置的同步线程。
 
 ## API
 

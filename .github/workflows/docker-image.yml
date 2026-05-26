@@ -44,6 +44,9 @@ jobs:
               -e DDL_DIR=/usr/local/src/restoredb/ddl \
               -e DDL_BACKUP_DIR=/usr/local/src/restoredb/ddl-backup \
               -e RESTORE_OUTPUT_DIR=/usr/local/src/restoredb/restore-jobs \
+              -e DDL_SYNC_ENABLED=true \
+              -e DDL_SYNC_DAILY_TIME=00:00 \
+              -e DDL_BACKUP_RETENTION_DAYS=31 \
               -e PORT="33061" \
               -v /usr/local/src/restoredb:/usr/local/src/restoredb \
               --name mysql-restore \

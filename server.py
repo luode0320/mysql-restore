@@ -25,6 +25,7 @@ import time
 import traceback
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,9 @@ RESTORE_ROOT = Path(os.getenv("RESTORE_ROOT", "/usr/local/src/restoredb"))
 DDL_ROOT = Path(os.getenv("DDL_DIR", str(RESTORE_ROOT / "ddl")))
 RESTORE_OUTPUT_DIR = Path(os.getenv("RESTORE_OUTPUT_DIR", str(RESTORE_ROOT / "restore-jobs")))
 DDL_BACKUP_ROOT = Path(os.getenv("DDL_BACKUP_DIR", str(RESTORE_ROOT / "ddl-backup")))
-SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "3600"))
+DDL_SYNC_DAILY_TIME = os.getenv("DDL_SYNC_DAILY_TIME", "00:00")
+DDL_BACKUP_RETENTION_DAYS = int(os.getenv("DDL_BACKUP_RETENTION_DAYS", "31"))
+DDL_SYNC_ENABLED = os.getenv("DDL_SYNC_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
 MYSQL_HOST = os.getenv("DB_HOST", "127.0.0.1")
 MYSQL_PORT = os.getenv("DB_PORT", "33060")
 MYSQL_USER = os.getenv("DB_USER", "root")
@@ -541,6 +544,65 @@ def dump_table_ddl(dump_args: list[str], database: str, table: str, output_file:
         print(result.stderr.strip(), flush=True)
 
 
+def has_valid_ddl(root: Path) -> bool:
+    """Return whether a DDL root contains at least one database/table SQL file."""
+
+    if not root.exists() or not root.is_dir():
+        return False
+    return any(sql_file.is_file() for sql_file in root.glob("*/*.sql"))
+
+
+def build_backup_dir(now: datetime | None = None) -> Path:
+    """Build a unique timestamped DDL backup directory path."""
+
+    backup_time = now or datetime.now()
+    base_name = backup_time.strftime("%Y%m%d-%H%M%S")
+    backup_dir = DDL_BACKUP_ROOT / base_name
+    index = 1
+    while backup_dir.exists():
+        backup_dir = DDL_BACKUP_ROOT / f"{base_name}-{index}"
+        index += 1
+    return backup_dir
+
+
+def backup_current_ddl() -> None:
+    """Copy current DDL into a timestamped backup directory when it is valid."""
+
+    DDL_BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    if not has_valid_ddl(DDL_ROOT):
+        print(f"[{time.strftime('%F %T')}] current ddl has no valid database/table sql, skip backup", flush=True)
+        return
+
+    backup_dir = build_backup_dir()
+    print(f"[{time.strftime('%F %T')}] backup current ddl to: {backup_dir}", flush=True)
+    shutil.copytree(DDL_ROOT, backup_dir)
+
+
+def cleanup_old_ddl_backups() -> None:
+    """Remove timestamped DDL backups older than the configured retention days."""
+
+    if DDL_BACKUP_RETENTION_DAYS <= 0:
+        print(f"[{time.strftime('%F %T')}] ddl backup retention disabled, skip cleanup", flush=True)
+        return
+    if not DDL_BACKUP_ROOT.exists():
+        return
+
+    expire_before = datetime.now() - timedelta(days=DDL_BACKUP_RETENTION_DAYS)
+    removed_count = 0
+    for backup_dir in DDL_BACKUP_ROOT.iterdir():
+        if not backup_dir.is_dir():
+            continue
+        try:
+            backup_time = datetime.strptime(backup_dir.name[:15], "%Y%m%d-%H%M%S")
+        except ValueError:
+            backup_time = datetime.fromtimestamp(backup_dir.stat().st_mtime)
+        if backup_time < expire_before:
+            shutil.rmtree(backup_dir)
+            removed_count += 1
+
+    print(f"[{time.strftime('%F %T')}] old ddl backup cleanup removed: {removed_count}", flush=True)
+
+
 def publish_synced_ddl(tmp_dir: Path) -> None:
     """发布新 DDL 并刷新旧 DDL 备份。
 
@@ -554,14 +616,11 @@ def publish_synced_ddl(tmp_dir: Path) -> None:
     """
 
     print(f"[{time.strftime('%F %T')}] refresh ddl backup", flush=True)
-    if DDL_BACKUP_ROOT.exists():
-        shutil.rmtree(DDL_BACKUP_ROOT)
-    if DDL_ROOT.exists():
-        print(f"[{time.strftime('%F %T')}] move current ddl to backup: {DDL_BACKUP_ROOT}", flush=True)
-        DDL_ROOT.replace(DDL_BACKUP_ROOT)
-    else:
-        print(f"[{time.strftime('%F %T')}] current ddl dir not found, skip backup", flush=True)
+    backup_current_ddl()
+    cleanup_old_ddl_backups()
 
+    if DDL_ROOT.exists():
+        shutil.rmtree(DDL_ROOT)
     print(f"[{time.strftime('%F %T')}] publish new ddl: {DDL_ROOT}", flush=True)
     tmp_dir.replace(DDL_ROOT)
 
@@ -627,6 +686,31 @@ def run_ddl_sync_once() -> None:
         raise
 
 
+def parse_daily_sync_time() -> tuple[int, int]:
+    """Parse DDL_SYNC_DAILY_TIME into hour and minute."""
+
+    try:
+        hour_text, minute_text = DDL_SYNC_DAILY_TIME.split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+    except ValueError as exc:
+        raise ValueError(f"invalid DDL_SYNC_DAILY_TIME: {DDL_SYNC_DAILY_TIME}") from exc
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        raise ValueError(f"invalid DDL_SYNC_DAILY_TIME: {DDL_SYNC_DAILY_TIME}")
+    return hour, minute
+
+
+def seconds_until_next_daily_sync() -> tuple[float, datetime]:
+    """Calculate seconds until the next configured daily DDL sync time."""
+
+    hour, minute = parse_daily_sync_time()
+    now = datetime.now()
+    next_run = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if next_run <= now:
+        next_run += timedelta(days=1)
+    return max((next_run - now).total_seconds(), 1), next_run
+
+
 def ddl_sync_loop() -> None:
     """按配置间隔循环同步 DDL。
 
@@ -644,7 +728,12 @@ def ddl_sync_loop() -> None:
             run_ddl_sync_once()
         except Exception as exc:  # noqa: BLE001
             print(f"[{time.strftime('%F %T')}] ddl sync failed: {exc}", flush=True)
-        time.sleep(max(SYNC_INTERVAL_SECONDS, 60))
+        wait_seconds, next_run = seconds_until_next_daily_sync()
+        print(
+            f"[{time.strftime('%F %T')}] next ddl sync scheduled at {next_run.strftime('%F %T')}",
+            flush=True,
+        )
+        time.sleep(wait_seconds)
 
 
 def start_ddl_sync_worker() -> None:
@@ -659,9 +748,10 @@ def start_ddl_sync_worker() -> None:
     最近修改时间: 2026-05-20 00:35:00
     """
 
-    if SYNC_INTERVAL_SECONDS <= 0:
-        print("DDL sync worker disabled because SYNC_INTERVAL_SECONDS <= 0", flush=True)
+    if not DDL_SYNC_ENABLED:
+        print("DDL sync worker disabled because DDL_SYNC_ENABLED is false", flush=True)
         return
+    parse_daily_sync_time()
     worker = threading.Thread(target=ddl_sync_loop, daemon=True)
     worker.start()
 
@@ -1239,7 +1329,9 @@ class RestoreHandler(BaseHTTPRequestHandler):
                     "ddlRoot": str(DDL_ROOT),
                     "ddlBackupRoot": str(DDL_BACKUP_ROOT),
                     "restoreOutputDir": str(RESTORE_OUTPUT_DIR),
-                    "syncIntervalSeconds": SYNC_INTERVAL_SECONDS,
+                    "ddlSyncEnabled": DDL_SYNC_ENABLED,
+                    "ddlSyncDailyTime": DDL_SYNC_DAILY_TIME,
+                    "ddlBackupRetentionDays": DDL_BACKUP_RETENTION_DAYS,
                 },
             )
             return
@@ -1319,7 +1411,10 @@ def main() -> None:
     print(f"mysql-restore listening on http://{HTTP_HOST}:{HTTP_PORT}")
     print(f"DDL root: {DDL_ROOT}")
     print(f"DDL backup root: {DDL_BACKUP_ROOT}")
-    print(f"DDL sync interval seconds: {SYNC_INTERVAL_SECONDS}")
+    print(f"DDL sync enabled: {DDL_SYNC_ENABLED}")
+    print(f"DDL sync on startup: true")
+    print(f"DDL sync daily time: {DDL_SYNC_DAILY_TIME}")
+    print(f"DDL backup retention days: {DDL_BACKUP_RETENTION_DAYS}")
     print(f"Restore output: {RESTORE_OUTPUT_DIR}")
     server.serve_forever()
 
